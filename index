@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>金幣收集遊戲</title>
+  <style>
+    /* 全局樣式與重置 */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      overflow: hidden;
+      font-family: sans-serif;
+      background-color: transparent;
+    }
+
+    /* 遊戲容器樣式 - 使用相對單位實現響應式 */
+    #game-container {
+      width: 100vw;
+      height: 100vh;
+      max-width: 1200px;
+      max-height: 2400px;
+      margin: 0 auto;
+      position: relative;
+      overflow: hidden;
+      background: transparent; /* 透明背景 */
+      touch-action: none; /* 防止觸控設備上的默認行為 */
+    }
+
+    /* 臨時提示樣式 */
+    #temp-instruction {
+      position: absolute;
+      top: 4vh;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.8);
+      padding: 1.5vh 3vw;
+      border-radius: 5vh;
+      font-size: 2.5vh;
+      text-align: center;
+      font-weight: bold;
+      color: #FFD700;
+      z-index: 100;
+      opacity: 0;
+      animation: fadeInOut 3s ease-in-out forwards;
+    }
+
+    @keyframes fadeInOut {
+      0% { opacity: 0; }
+      20% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    /* 金幣樣式 */
+    .coin {
+      position: absolute;
+      width: 6vmin;
+      height: 6vmin;
+      min-width: 30px;
+      min-height: 30px;
+      max-width: 80px;
+      max-height: 80px;
+      border-radius: 50%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      box-shadow: 0 0 10px 2px rgba(255, 215, 0, 0.5);
+      z-index: 5;
+      /* 添加金幣3D效果 */
+      background: radial-gradient(circle at 30% 30%, #FFD700, #FFA500);
+      border: min(4px, 0.3vmin) solid #FFC125;
+    }
+
+    .coin:before {
+      content: "$";
+      color: #FFA500;
+      font-size: min(48px, 3.5vmin);
+      font-weight: bold;
+      text-shadow: 0 0 4px #8B4513;
+    }
+
+    /* 角色樣式 */
+    #character {
+      position: absolute;
+      width: 12vmin;
+      height: 12vmin;
+      min-width: 80px;
+      min-height: 80px;
+      max-width: 180px;
+      max-height: 180px;
+      cursor: default;
+      z-index: 10;
+      will-change: transform; /* 優化性能 */
+      transform: translateZ(0); /* 硬件加速 */
+    }
+
+    /* 金幣收集動畫 */
+    @keyframes collect {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.5); opacity: 0.8; }
+      100% { transform: scale(0.1); opacity: 0; }
+    }
+
+    .collected {
+      animation: collect 0.4s forwards;
+    }
+
+    /* 金幣旋轉動畫 */
+    @keyframes spin {
+      0% { transform: rotateY(0deg); }
+      50% { transform: rotateY(180deg); }
+      100% { transform: rotateY(360deg); }
+    }
+
+    /* 響應式調整 - 適配豎屏手機 */
+    @media screen and (orientation: portrait) and (max-width: 767px) {
+      /* 縮小金幣尺寸 */
+      .coin {
+        width: 10vmin;
+        height: 10vmin;
+      }
+      
+      /* 調整提示文字大小 */
+      #temp-instruction {
+        font-size: 3vmin;
+        padding: 2vmin 4vmin;
+        width: 80%;
+        max-width: 300px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- 遊戲容器 -->
+  <div id="game-container">
+    <!-- 臨時提示 -->
+    <div id="temp-instruction">
+      移動滑鼠或傾斜手機收集金幣
+    </div>
+    
+    <!-- 角色 -->
+    <div id="character"></div>
+  </div>
+
+  <script>
+    // 獲取DOM元素
+    const gameContainer = document.getElementById('game-container');
+    const character = document.getElementById('character');
+    const tempInstruction = document.getElementById('temp-instruction');
+
+    // 遊戲狀態
+    let gameStarted = false;
+    let gameEnded = false;
+    let allCoinsCollected = false;
+    let score = 0;
+    let characterY = 0;
+    let characterX = 0;
+    let gameInterval;
+    let collectedCoins = [];
+    let lottieInstance = null;
+    let requestId = null;
+    let mouseX = 0;
+    let containerWidth, containerHeight;
+    let characterWidth, characterHeight;
+    let isMobile = false;
+    let isAccelerometerSupported = false;
+    let orientationPermissionGranted = false;
+    let isPortrait = false;
+
+    // 檢測設備類型和功能
+    function detectDevice() {
+      // 檢測移動設備
+      isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      // 檢測重力感應支持
+      isAccelerometerSupported = window.DeviceOrientationEvent !== undefined;
+      
+      // 檢測屏幕方向
+      isPortrait = window.innerHeight > window.innerWidth;
+      
+      // 針對移動設備優化遊戲
+      if (isMobile) {
+        setupMobileGame();
+      } else {
+        setupDesktopGame();
+      }
+    }
+
+    // 移動設備設置
+    function setupMobileGame() {
+      // iOS 13+ 需要請求權限訪問運動傳感器
+      if (isAccelerometerSupported && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        // 添加請求權限按鈕
+        const permissionButton = document.createElement('button');
+        permissionButton.textContent = '允許重力感應控制';
+        permissionButton.style.position = 'absolute';
+        permissionButton.style.zIndex = '200';
+        permissionButton.style.top = '50%';
+        permissionButton.style.left = '50%';
+        permissionButton.style.transform = 'translate(-50%, -50%)';
+        permissionButton.style.padding = '15px 30px';
+        permissionButton.style.backgroundColor = '#FFD700';
+        permissionButton.style.border = 'none';
+        permissionButton.style.borderRadius = '30px';
+        permissionButton.style.fontSize = '16px';
+        permissionButton.style.fontWeight = 'bold';
+        
+        permissionButton.addEventListener('click', () => {
+          DeviceOrientationEvent.requestPermission()
+            .then(response => {
+              if (response === 'granted') {
+                orientationPermissionGranted = true;
+                permissionButton.remove();
+                setupDeviceOrientation();
+                startGame();
+              }
+            })
+            .catch(console.error);
+        });
+        
+        gameContainer.appendChild(permissionButton);
+      } else if (isAccelerometerSupported) {
+        // 其他移動設備直接設置
+        orientationPermissionGranted = true;
+        setupDeviceOrientation();
+        
+        // 點擊屏幕開始遊戲
+        gameContainer.addEventListener('touchstart', () => {
+          if (!gameStarted && !gameEnded) {
+            startGame();
+          }
+        });
+      } else {
+        // 不支持重力感應的移動設備使用觸摸控制
+        setupTouchControls();
+        
+        // 點擊屏幕開始遊戲
+        gameContainer.addEventListener('touchstart', () => {
+          if (!gameStarted && !gameEnded) {
+            startGame();
+          }
+        });
+      }
+      
+      // 調整遊戲元素大小適應屏幕
+      responsiveResize();
+      window.addEventListener('resize', () => {
+        // 檢測屏幕方向改變
+        const newIsPortrait = window.innerHeight > window.innerWidth;
+        if (newIsPortrait !== isPortrait) {
+          isPortrait = newIsPortrait;
+          // 屏幕方向改變時重新調整
+          responsiveResize();
+          createResponsiveCoinPositions();
+          if (gameStarted) {
+            createCoins();
+          }
+        } else {
+          responsiveResize();
+        }
+      });
+    }
+
+    // 桌面設備設置
+    function setupDesktopGame() {
+      // 鼠標移動控制
+      gameContainer.addEventListener('mouseenter', () => {
+        if (!gameEnded) {
+          gameContainer.addEventListener('mousemove', handleMouseMove);
+        }
+      });
+      
+      gameContainer.addEventListener('mouseleave', () => {
+        gameContainer.removeEventListener('mousemove', handleMouseMove);
+      });
+      
+      // 調整遊戲元素大小適應屏幕
+      responsiveResize();
+      window.addEventListener('resize', responsiveResize);
+    }
+
+    // 設置設備方向事件
+    function setupDeviceOrientation() {
+      window.addEventListener('deviceorientation', handleDeviceOrientation);
+    }
+
+    // 設置觸摸控制
+    function setupTouchControls() {
+      gameContainer.addEventListener('touchmove', handleTouchMove);
+    }
+
+    // 處理設備方向變化
+    function handleDeviceOrientation(event) {
+      if (!gameStarted || gameEnded) return;
+      
+      // 豎屏模式和橫屏模式使用不同的方向數據
+      if (isPortrait) {
+        // 豎屏模式下使用gamma (左右傾斜)
+        const gamma = event.gamma;
+        // 將gamma從-90~90映射到0~containerWidth
+        const targetX = ((gamma + 90) / 180) * containerWidth;
+        mouseX = Math.max(0, Math.min(containerWidth - characterWidth, targetX));
+      } else {
+        // 橫屏模式下使用beta (前後傾斜)
+        const beta = event.beta;
+        // 將beta從-90~90映射到0~containerWidth，但需要反轉方向
+        const targetX = (1 - ((beta + 90) / 180)) * containerWidth;
+        mouseX = Math.max(0, Math.min(containerWidth - characterWidth, targetX));
+      }
+    }
+
+    // 處理觸摸移動
+    function handleTouchMove(event) {
+      if (!gameStarted || gameEnded) return;
+      event.preventDefault();
+      
+      if (event.touches.length > 0) {
+        const touch = event.touches[0];
+        const containerRect = gameContainer.getBoundingClientRect();
+        const relativeX = touch.clientX - containerRect.left;
+        
+        // 更新目標位置，平滑移動由updateCharacterPosition處理
+        mouseX = Math.max(0, Math.min(containerWidth - characterWidth, relativeX - characterWidth/2));
+      }
+    }
+
+    // 處理鼠標移動
+    function handleMouseMove(e) {
+      if (gameEnded) return;
+      
+      if (!gameStarted) {
+        startGame();
+        return;
+      }
+      
+      const containerRect = gameContainer.getBoundingClientRect();
+      const relativeX = e.clientX - containerRect.left;
+      
+      // 更新目標位置，平滑移動由updateCharacterPosition處理
+      mouseX = Math.max(0, Math.min(containerWidth - characterWidth, relativeX - characterWidth/2));
+    }
+
+    // 響應式調整遊戲元素大小
+    function responsiveResize() {
+      // 獲取容器大小
+      containerWidth = gameContainer.clientWidth;
+      containerHeight = gameContainer.clientHeight;
+      
+      // 根據屏幕方向調整角色尺寸
+      if (isPortrait && isMobile) {
+        // 豎屏手機上角色相對更大
+        characterWidth = Math.min(180, Math.max(80, containerWidth * 0.18));
+      } else {
+        // 橫屏或桌面設備
+        characterWidth = Math.min(180, Math.max(80, containerWidth * 0.12));
+      }
+      characterHeight = characterWidth;
+      
+      // 設置角色初始位置
+      characterX = (containerWidth - characterWidth) / 2; // 水平居中
+      characterY = -characterHeight; // 設置在畫面上方，畫面外
+      
+      // 更新角色位置
+      character.style.top = `${characterY}px`;
+      character.style.left = `${characterX}px`;
+      character.style.width = `${characterWidth}px`;
+      character.style.height = `${characterHeight}px`;
+      
+      // 重新創建金幣位置
+      createResponsiveCoinPositions();
+      
+      // 如果遊戲已開始，重新創建金幣
+      if (gameStarted) {
+        createCoins();
+      }
+    }
+
+    // 創建金幣位置
+    let coinPositions = [];
+
+    // 創建響應式金幣位置
+    function createResponsiveCoinPositions() {
+      coinPositions = [];
+      let coinCount = 15;
+      
+      // 豎屏模式減少金幣數量，改為更適合豎屏的分佈
+      if (isPortrait && isMobile) {
+        coinCount = 10;
+        
+        // 創建更適合豎屏的金幣分佈
+        for (let i = 0; i < coinCount; i++) {
+          // 計算在容器中的相對位置
+          const progress = i / (coinCount - 1);
+          
+          // 橫向位置在中間區域隨機分佈，避免靠近邊緣
+          const leftMargin = containerWidth * 0.1;
+          const rightMargin = containerWidth * 0.1;
+          const xRange = containerWidth - leftMargin - rightMargin;
+          const x = leftMargin + Math.random() * xRange;
+          
+          // 縱向位置均勻分佈
+          const y = containerHeight * (0.15 + progress * 0.7);
+          
+          coinPositions.push({
+            id: i + 1,
+            x: x,
+            y: y
+          });
+        }
+      } else {
+        // 創建螺旋形分佈的金幣 (適合橫屏)
+        for (let i = 0; i < coinCount; i++) {
+          // 計算在容器中的相對位置
+          const progress = i / (coinCount - 1);
+          const spiralRadius = Math.min(containerWidth, containerHeight) * 0.25 * (1 - progress * 0.5);
+          const angle = progress * 10; // 10次旋轉
+          
+          // 計算螺旋坐標
+          const x = containerWidth/2 + Math.cos(angle) * spiralRadius;
+          const y = containerHeight * (0.15 + progress * 0.7); // 從0.15到0.85的高度分佈
+          
+          coinPositions.push({
+            id: i + 1,
+            x: x,
+            y: y
+          });
+        }
+      }
+    }
+
+    // 加載Lottie角色
+    async function loadLottieCharacter() {
+      // 直接在這裡替換成你的JSON文件URL
+      const jsonUrl = 'https://gist.githubusercontent.com/yuxuannnnnnnnn/72043b3e32d9724a332268e064e4b6bb/raw/207dd16e299777d145ee7e27c28da7ad73a24fca/gistfile1.json';
+      
+      try {
+        // 動態加載Lottie庫
+        if (!window.lottie) {
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.9.6/lottie.min.js';
+          document.head.appendChild(script);
+          
+          // 等待腳本加載完成
+          await new Promise(resolve => script.onload = resolve);
+        }
+        
+        // 加載Lottie動畫
+        lottieInstance = lottie.loadAnimation({
+          container: character,
+          renderer: 'svg',
+          loop: true,
+          autoplay: true,
+          path: jsonUrl
+        });
+        
+        // 設置角色樣式
+        character.style.backgroundColor = 'transparent';
+        
+        // 角色尺寸由responsiveResize設置
+      } catch (error) {
+        console.error('無法加載Lottie角色:', error);
+        // 如果加載失敗，使用簡單的佔位符
+        character.innerHTML = '';
+        character.style.backgroundColor = 'transparent';
+      }
+    }
+
+    // 創建所有金幣
+    function createCoins() {
+      // 移除現有金幣
+      document.querySelectorAll('.coin').forEach(coin => coin.remove());
+      
+      // 創建新金幣
+      const coinSize = isPortrait && isMobile 
+        ? Math.min(80, Math.max(40, containerWidth * 0.1)) // 豎屏手機上金幣更大
+        : Math.min(80, Math.max(30, containerWidth * 0.06)); // 橫屏或桌面設備
+      
+      coinPositions.forEach(coin => {
+        const coinElement = document.createElement('div');
+        coinElement.className = 'coin';
+        coinElement.id = `coin-${coin.id}`;
+        coinElement.style.left = `${coin.x - coinSize/2}px`;
+        coinElement.style.top = `${coin.y - coinSize/2}px`;
+        coinElement.style.width = `${coinSize}px`;
+        coinElement.style.height = `${coinSize}px`;
+        
+        // 添加金幣旋轉動畫
+        coinElement.style.animation = `spin ${2 + Math.random()}s linear infinite`;
+        
+        gameContainer.appendChild(coinElement);
+      });
+    }
+
+    // 使用requestAnimationFrame優化角色移動
+    function updateCharacterPosition() {
+      if (gameEnded) {
+        if (requestId) {
+          cancelAnimationFrame(requestId);
+          requestId = null;
+        }
+        return;
+      }
+
+      // 計算角色應該移動到的位置
+      const targetX = mouseX;
+      
+      // 獲取角色當前位置
+      const currentX = parseFloat(character.style.left) || characterX;
+      
+      // 平滑移動(插值)，移動設備上減小平滑係數以提高響應性
+      const smoothFactor = isMobile ? 0.2 : 0.1;
+      const dx = (targetX - currentX) * smoothFactor;
+      
+      // 設置最小移動閾值
+      if (Math.abs(dx) > 0.1) {
+        characterX = currentX + dx;
+        character.style.left = `${characterX}px`;
+      }
+      
+      // 循環調用實現平滑動畫
+      requestId = requestAnimationFrame(updateCharacterPosition);
+    }
+
+    // 檢測碰撞
+    function detectCollisions() {
+      coinPositions.forEach(coin => {
+        if (collectedCoins.includes(coin.id)) return;
+        
+        const coinElement = document.getElementById(`coin-${coin.id}`);
+        if (!coinElement) return;
+        
+        // 獲取角色和金幣的實際大小
+        const coinSize = parseFloat(getComputedStyle(coinElement).width);
+        
+        // 使用更寬鬆的碰撞檢測
+        const dx = Math.abs((characterX + characterWidth/2) - coin.x);
+        const dy = Math.abs((characterY + characterHeight/2) - coin.y);
+        
+        // 調整碰撞半徑為最大邊長的一半加上一個寬容值
+        // 在豎屏模式下使用更寬鬆的碰撞檢測
+        const collisionRadius = Math.max(characterWidth, characterHeight, coinSize) / 2 + 
+                               (isPortrait && isMobile ? 40 : 20);
+        
+        if (dx < collisionRadius && dy < collisionRadius) {
+          collectCoin(coin.id, coinElement);
+        }
+      });
+    }
+
+    // 收集金幣
+    function collectCoin(coinId, coinElement) {
+      collectedCoins.push(coinId);
+      
+      // 添加收集動畫
+      coinElement.classList.add('collected');
+      
+      // 在動畫結束後移除金幣
+      setTimeout(() => {
+        coinElement.remove();
+      }, 400);
+      
+      // 更新分數
+      score++;
+      
+      // 如果所有金幣都收集完畢，顯示提示但繼續遊戲
+      if (score >= coinPositions.length) {
+        allCoinsCollected = true;
+      }
+    }
+
+    // 開始遊戲
+    function startGame() {
+      if (gameStarted || gameEnded) return;
+      
+      // 設置遊戲狀態
+      gameStarted = true;
+      gameEnded = false;
+      allCoinsCollected = false;
+      score = 0;
+      collectedCoins = [];
+      
+      // 定位角色到初始位置 - 畫面上方，畫面外
+      characterX = (containerWidth - characterWidth) / 2;
+      characterY = -characterHeight;
+      character.style.top = `${characterY}px`;
+      character.style.left = `${characterX}px`;
+      
+      // 顯示臨時提示
+      const deviceText = isMobile ? 
+        (isAccelerometerSupported ? "傾斜手機收集金幣" : "滑動控制收集金幣") : 
+        "移動滑鼠收集金幣";
+      
+      tempInstruction.textContent = deviceText;
+      tempInstruction.style.animation = 'none';
+      void tempInstruction.offsetWidth;
+      tempInstruction.style.animation = 'fadeInOut 3s ease-in-out forwards';
+      
+      // 創建金幣
+      createCoins();
+      
+      // 啟動角色平滑移動
+      if (!requestId) {
+        requestId = requestAnimationFrame(updateCharacterPosition);
+      }
+      
+      // 啟動遊戲循環
+      if (gameInterval) {
+        clearInterval(gameInterval);
+      }
+      
+      // 計算下落速度，根據容器高度調整
+      // 豎屏模式降低下落速度，延長遊戲時間
+      const fallSpeed = containerHeight / (isPortrait ? 1500 : 1200);
+      
+      gameInterval = setInterval(() => {
+        // 遊戲結束後停止更新
+        if (gameEnded) {
+          clearInterval(gameInterval);
+          gameInterval = null;
+          return;
+        }
+        
+        // 角色下落
+        characterY += fallSpeed * 2;
+        character.style.top = `${characterY}px`;
+        
+        // 檢測碰撞
+        detectCollisions();
+        
+        // 檢查是否離開畫面
+        if (characterY > containerHeight + characterHeight) {
+          // 角色已完全離開畫面，結束遊戲
+          endGame();
+        }
+      }, 16);
+    }
+
+    // 結束遊戲
+    function endGame() {
+      // 設置遊戲狀態為結束
+      gameEnded = true;
+      gameStarted = false;
+      
+      // 停止遊戲循環
+      if (gameInterval) {
+        clearInterval(gameInterval);
+        gameInterval = null;
+      }
+      
+      // 停止角色移動
+      if (requestId) {
+        cancelAnimationFrame(requestId);
+        requestId = null;
+      }
+      
+      // 移除鼠標移動監聽
+      gameContainer.removeEventListener('mousemove', handleMouseMove);
+      
+      // 移除觸摸監聽
+      gameContainer.removeEventListener('touchmove', handleTouchMove);
+      
+      // 移除設備方向監聽
+      window.removeEventListener('deviceorientation', handleDeviceOrientation);
+    }
+
+    // 初始化
+    window.addEventListener('DOMContentLoaded', async () => {
+      await loadLottieCharacter();
+      detectDevice();
+    });
+  </script>
+</body>
+</html>
