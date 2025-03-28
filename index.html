@@ -16,16 +16,23 @@
       overflow: hidden;
       font-family: sans-serif;
       background-color: transparent;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
     }
 
     /* 遊戲容器樣式 - 使用相對單位實現響應式 */
     #game-container {
       width: 100vw;
       height: 100vh;
-      max-width: 1200px;
+      min-width: 360px; /* 設置橫向最小尺寸為360px */
+      max-width: 1440px; /* 設置橫向最大尺寸為1440px */
       max-height: 2400px;
       margin: 0 auto;
       position: relative;
+      left: 50%;
+      transform: translateX(-50%);
       overflow: hidden;
       background: transparent; /* 透明背景 */
       touch-action: none; /* 防止觸控設備上的默認行為 */
@@ -350,6 +357,27 @@
       // 獲取容器大小
       containerWidth = gameContainer.clientWidth;
       containerHeight = gameContainer.clientHeight;
+      
+      // 強制橫向模式最小寬度
+      if (!isPortrait && containerWidth < 360) {
+        gameContainer.style.width = '360px';
+        containerWidth = 360;
+      }
+      
+      // 強制橫向模式最大寬度
+      if (!isPortrait && containerWidth > 1440) {
+        gameContainer.style.width = '1440px';
+        containerWidth = 1440;
+      }
+      
+      // 確保容器居中
+      if (!isPortrait && (containerWidth === 360 || containerWidth === 1440)) {
+        gameContainer.style.left = '50%';
+        gameContainer.style.transform = 'translateX(-50%)';
+      } else {
+        gameContainer.style.left = '';
+        gameContainer.style.transform = '';
+      }
       
       // 根據屏幕方向調整角色尺寸
       if (isPortrait && isMobile) {
