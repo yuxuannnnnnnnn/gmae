@@ -178,6 +178,11 @@
     let isAccelerometerSupported = false;
     let orientationPermissionGranted = false;
     let isPortrait = false;
+    
+    // 新增狀態：控制角色是否可以移動
+    let characterCanMove = false;
+    // 新增狀態：提示文字的Y位置
+    let instructionY = 0;
 
     // 檢測設備類型和功能
     function detectDevice() {
@@ -303,7 +308,7 @@
 
     // 處理設備方向變化
     function handleDeviceOrientation(event) {
-      if (!gameStarted || gameEnded) return;
+      if (!gameStarted || gameEnded || !characterCanMove) return;
       
       // 豎屏模式和橫屏模式使用不同的方向數據
       if (isPortrait) {
@@ -323,7 +328,7 @@
 
     // 處理觸摸移動
     function handleTouchMove(event) {
-      if (!gameStarted || gameEnded) return;
+      if (!gameStarted || gameEnded || !characterCanMove) return;
       event.preventDefault();
       
       if (event.touches.length > 0) {
@@ -344,6 +349,9 @@
         startGame();
         return;
       }
+      
+      // 只有當角色可以移動時才更新位置
+      if (!characterCanMove) return;
       
       const containerRect = gameContainer.getBoundingClientRect();
       const relativeX = e.clientX - containerRect.left;
@@ -389,9 +397,14 @@
       }
       characterHeight = characterWidth;
       
-      // 設置角色初始位置
+      // 設置角色初始位置 (從畫面頂部中間開始)
       characterX = (containerWidth - characterWidth) / 2; // 水平居中
-      characterY = -characterHeight; // 設置在畫面上方，畫面外
+      characterY = -characterHeight; // 畫面上方外
+      
+      // 獲取提示文字的位置
+      const instructionRect = tempInstruction.getBoundingClientRect();
+      const containerRect = gameContainer.getBoundingClientRect();
+      instructionY = instructionRect.top - containerRect.top + instructionRect.height;
       
       // 更新角色位置
       character.style.top = `${characterY}px`;
@@ -535,7 +548,8 @@
       }
 
       // 計算角色應該移動到的位置
-      const targetX = mouseX;
+      // 只有在角色可以移動時才使用滑鼠位置
+      const targetX = characterCanMove ? mouseX : characterX;
       
       // 獲取角色當前位置
       const currentX = parseFloat(character.style.left) || characterX;
@@ -611,8 +625,14 @@
       allCoinsCollected = false;
       score = 0;
       collectedCoins = [];
+      characterCanMove = false; // 初始不能移動
       
-      // 定位角色到初始位置 - 畫面上方，畫面外
+      // 獲取提示文字位置
+      const instructionRect = tempInstruction.getBoundingClientRect();
+      const containerRect = gameContainer.getBoundingClientRect();
+      instructionY = instructionRect.top - containerRect.top + instructionRect.height;
+      
+      // 放置角色在頂部中間
       characterX = (containerWidth - characterWidth) / 2;
       characterY = -characterHeight;
       character.style.top = `${characterY}px`;
@@ -641,9 +661,10 @@
         clearInterval(gameInterval);
       }
       
-      // 計算下落速度，根據容器高度調整
-      // 豎屏模式降低下落速度，延長遊戲時間
-      const fallSpeed = containerHeight / (isPortrait ? 1500 : 1200);
+      // 計算下落速度
+      const initialFallSpeed = containerHeight / 2000; // 開始時較慢的下落速度
+      const normalFallSpeed = containerHeight / (isPortrait ? 1500 : 1200); // 正常下落速度
+      let currentFallSpeed = initialFallSpeed;
       
       gameInterval = setInterval(() => {
         // 遊戲結束後停止更新
@@ -654,8 +675,17 @@
         }
         
         // 角色下落
-        characterY += fallSpeed * 2;
+        characterY += currentFallSpeed * 2;
         character.style.top = `${characterY}px`;
+        
+        // 檢查是否到達提示文字位置
+        if (!characterCanMove && characterY + characterHeight >= instructionY) {
+          characterCanMove = true;
+          // 可以添加到達效果，例如更改顏色或閃爍效果
+          
+          // 增加下落速度到正常速度
+          currentFallSpeed = normalFallSpeed;
+        }
         
         // 檢測碰撞
         detectCollisions();
@@ -673,6 +703,7 @@
       // 設置遊戲狀態為結束
       gameEnded = true;
       gameStarted = false;
+      characterCanMove = false;
       
       // 停止遊戲循環
       if (gameInterval) {
